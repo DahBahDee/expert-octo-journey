@@ -25,10 +25,11 @@ def chat_completions():
     
     try:
         data = request.get_json()
+        print(f"Received request: {data}")
         
         # Extract OpenAI format parameters
         messages = data.get('messages', [])
-        model = data.get('model', 'meta/llama-3.1-405b-instruct')
+        model = data.get('model', 'meta/llama-3.1-70b-instruct')
         temperature = data.get('temperature', 0.7)
         max_tokens = data.get('max_tokens', 1024)
         stream = data.get('stream', False)
@@ -47,13 +48,18 @@ def chat_completions():
             'Content-Type': 'application/json'
         }
         
+        print(f"Calling NVIDIA API with model: {model}")
+        
         # Make request to NVIDIA NIM
         nim_response = requests.post(
             f'{NIM_BASE_URL}/chat/completions',
             headers=headers,
             json=nim_payload,
-            stream=stream
+            stream=stream,
+            timeout=60
         )
+        
+        print(f"NVIDIA Response Status: {nim_response.status_code}")
         
         if stream:
             def generate():
@@ -63,9 +69,20 @@ def chat_completions():
             
             return Response(generate(), content_type='text/event-stream')
         else:
-            return jsonify(nim_response.json()), nim_response.status_code
+            response_data = nim_response.json()
+            print(f"Response data: {response_data}")
             
+            # Return the response with proper status code
+            return jsonify(response_data), nim_response.status_code
+            
+    except requests.exceptions.Timeout:
+        print("Request timeout")
+        return jsonify({'error': 'Request timeout'}), 504
+    except requests.exceptions.RequestException as e:
+        print(f"Request error: {str(e)}")
+        return jsonify({'error': f'Request error: {str(e)}'}), 502
     except Exception as e:
+        print(f"Error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/v1/models', methods=['GET'])
