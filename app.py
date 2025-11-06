@@ -1,7 +1,6 @@
 from flask import Flask, request, jsonify, Response
 import requests
 import os
-import json
 
 app = Flask(__name__)
 
@@ -9,8 +8,21 @@ app = Flask(__name__)
 NIM_API_KEY = os.environ.get('NIM_API_KEY', '')
 NIM_BASE_URL = os.environ.get('NIM_BASE_URL', 'https://integrate.api.nvidia.com/v1')
 
-@app.route('/v1/chat/completions', methods=['POST'])
+print(f"Server starting... NIM_BASE_URL: {NIM_BASE_URL}")
+
+# Add CORS headers to all responses
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
+    return response
+
+@app.route('/v1/chat/completions', methods=['POST', 'OPTIONS'])
 def chat_completions():
+    if request.method == 'OPTIONS':
+        return '', 204
+    
     try:
         data = request.get_json()
         
