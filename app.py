@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify, Response
 import requests
 import os
+import time
 
 app = Flask(__name__)
 
@@ -14,7 +15,7 @@ print(f"Server starting... NIM_BASE_URL: {NIM_BASE_URL}")
 @app.after_request
 def after_request(response):
     response.headers.add('Access-Control-Allow-Origin', '*')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With')
     response.headers.add('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
     return response
 
@@ -25,9 +26,9 @@ def chat_completions():
     
     try:
         data = request.get_json()
-        print(f"Received request: {data}")
+        print(f"Received request from Janitor AI")
         
-        # Extract OpenAI format parameters
+        # Extract parameters
         messages = data.get('messages', [])
         model = data.get('model', 'meta/llama-3.1-70b-instruct')
         temperature = data.get('temperature', 0.7)
@@ -40,7 +41,7 @@ def chat_completions():
             'messages': messages,
             'temperature': temperature,
             'max_tokens': max_tokens,
-            'stream': stream
+            'stream': False  # Force non-streaming for compatibility
         }
         
         headers = {
@@ -48,32 +49,58 @@ def chat_completions():
             'Content-Type': 'application/json'
         }
         
-        print(f"Calling NVIDIA API with model: {model}")
+        print(f"Calling NVIDIA with model: {model}")
         
         # Make request to NVIDIA NIM
         nim_response = requests.post(
             f'{NIM_BASE_URL}/chat/completions',
             headers=headers,
             json=nim_payload,
-            stream=stream,
-            timeout=60
+            timeout=120
         )
         
-        print(f"NVIDIA Response Status: {nim_response.status_code}")
+        print(f"NVIDIA Status: {nim_response.status_code}")
         
-        if stream:
-            def generate():
-                for line in nim_response.iter_lines():
-                    if line:
-                        yield line + b'\n'
-            
-            return Response(generate(), content_type='text/event-stream')
-        else:
+        if nim_response.status_code == 200:
             response_data = nim_response.json()
-            print(f"Response data: {response_data}")
             
-            # Return the response with proper status code
-            return jsonify(response_data), nim_response.status_code
+            # Ensure the response has all required OpenAI fields
+            if 'choices' in response_data and len(response_data['choices']) > 0:
+                # Make sure message content exists
+                if 'message' in response_data['choices'][0]:
+                    content = response_data['choices'][0]['message'].get('content', '')
+                    print(f"Response content length: {len(content)}")
+                    
+                    # Ensure proper OpenAI format
+                    formatted_response = {
+                        'id': response_data.get('id', f'chatcmpl-{int(time.time())}'),
+                        'object': 'chat.completion',
+                        'created': response_data.get('created', int(time.time())),
+                        'model': response_data.get('model', model),
+                        'choices': [{
+                            'index': 0,
+                            'message': {
+                                'role': 'assistant',
+                                'content': content
+                            },
+                            'finish_reason': response_data['choices'][0].get('finish_reason', 'stop')
+                        }],
+                        'usage': response_data.get('usage', {
+                            'prompt_tokens': 0,
+                            'completion_tokens': 0,
+                            'total_tokens': 0
+                        })
+                    }
+                    
+                    return jsonify(formatted_response), 200
+            
+            # If we get here, return the raw response
+            print("Returning raw NVIDIA response")
+            return jsonify(response_data), 200
+        else:
+            error_msg = f"NVIDIA API error: {nim_response.status_code}"
+            print(error_msg)
+            return jsonify({'error': error_msg, 'details': nim_response.text}), nim_response.status_code
             
     except requests.exceptions.Timeout:
         print("Request timeout")
@@ -83,6 +110,8 @@ def chat_completions():
         return jsonify({'error': f'Request error: {str(e)}'}), 502
     except Exception as e:
         print(f"Error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 @app.route('/v1/models', methods=['GET'])
